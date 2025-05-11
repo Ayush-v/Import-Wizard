@@ -122,6 +122,52 @@ function isBooleanLike(value: any) {
   );
 }
 
+// 1. Add this function (copy from transformation-options.tsx, or import if you prefer)
+const transformValue = (value: string, transformation: any): string => {
+  if (!value) return value
+
+  switch (transformation.type) {
+    case "none":
+      return value
+    case "trim":
+      return value.trim()
+    case "uppercase":
+      return value.toUpperCase()
+    case "lowercase":
+      return value.toLowerCase()
+    case "capitalize":
+      return value
+        .toLowerCase()
+        .split(" ")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ")
+    case "number":
+      const num = Number.parseFloat(value)
+      if (isNaN(num)) return value
+      const places = transformation.options?.decimalPlaces ?? 0
+      return num.toFixed(places)
+    case "boolean":
+      const trueValues = transformation.options?.trueValues || ["true", "yes", "1"]
+      const falseValues = transformation.options?.falseValues || ["false", "no", "0"]
+
+      if (trueValues.includes(value.toLowerCase())) return "true"
+      if (falseValues.includes(value.toLowerCase())) return "false"
+      return value
+    case "date":
+      try {
+        const date = new Date(value)
+        return date.toLocaleDateString()
+      } catch {
+        return value
+      }
+    case "custom":
+      // Placeholder for custom formula
+      return `${value} (custom)`
+    default:
+      return value
+  }
+}
+
 export default function FileImportWizard() {
   const [currentStep, setCurrentStep] = useState(1)
   const [fileData, setFileData] = useState<FileData | null>(null)
@@ -431,54 +477,6 @@ export default function FileImportWizard() {
     setColumnMappings(
       columnMappings.map((mapping) => (mapping.targetField === targetField ? { ...mapping, transformation } : mapping)),
     )
-  }
-
-  // Apply transformations to a value
-  const transformValue = (value: string, transformation: TransformationConfig): string => {
-    if (!value) return value
-
-    switch (transformation.type) {
-      case "none":
-        return value
-      case "trim":
-        return value.trim()
-      case "uppercase":
-        return value.toUpperCase()
-      case "lowercase":
-        return value.toLowerCase()
-      case "capitalize":
-        return value
-          .toLowerCase()
-          .split(" ")
-          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-          .join(" ")
-      case "number":
-        const num = Number.parseFloat(value)
-        if (isNaN(num)) return value
-        const places = transformation.options?.decimalPlaces ?? 0
-        return num.toFixed(places)
-      case "boolean":
-        const trueValues = transformation.options?.trueValues || ["true", "yes", "1"]
-        const falseValues = transformation.options?.falseValues || ["false", "no", "0"]
-
-        if (trueValues.includes(value.toLowerCase())) return "true"
-        if (falseValues.includes(value.toLowerCase())) return "false"
-        return value
-      case "date":
-        try {
-          const date = new Date(value)
-          // In a real app, you'd use a proper date formatting library
-          return date.toLocaleDateString()
-        } catch {
-          return value
-        }
-      case "custom":
-        // In a real app, you'd implement a safe way to evaluate custom formulas
-        // This is just a placeholder
-        return `${value} (custom)`
-      default:
-        return value
-    }
   }
 
   // Get transformed value for preview
@@ -1647,30 +1645,31 @@ export default function FileImportWizard() {
 
                           // Check for edited value (even after saving)
                           const editedValue = editedRows[absoluteIndex]?.[col.field];
-                          if (editedValue !== undefined && editedValue !== null && editedValue !== "") {
-                            return (
-                              <td key={colIndex} className="px-4 py-3 text-gray-600">
-                                {editedValue}
-                              </td>
-                            );
-                          }
+                          let displayValue: string | null = null;
 
-                          // Only merge if no edited value
-                          let values: string[] = [];
-                          if (mapping.sourceIndex !== null && row[mapping.sourceIndex] !== undefined) {
-                            values.push(row[mapping.sourceIndex]);
+                          if (editedValue !== undefined && editedValue !== null && editedValue !== "") {
+                            // Apply transformation to edited value
+                            displayValue = transformValue(editedValue, mapping.transformation);
+                          } else {
+                            // Only merge if no edited value
+                            let values: string[] = [];
+                            if (mapping.sourceIndex !== null && row[mapping.sourceIndex] !== undefined) {
+                              values.push(row[mapping.sourceIndex]);
+                            }
+                            if (mapping.additionalSources && mapping.additionalSources.length > 0) {
+                              mapping.additionalSources.forEach(source => {
+                                if (row[source.sourceIndex] !== undefined) {
+                                  values.push(row[source.sourceIndex]);
+                                }
+                              });
+                            }
+                            const mergedValue = values.join(" ");
+                            // Apply transformation to merged value
+                            displayValue = transformValue(mergedValue, mapping.transformation);
                           }
-                          if (mapping.additionalSources && mapping.additionalSources.length > 0) {
-                            mapping.additionalSources.forEach(source => {
-                              if (row[source.sourceIndex] !== undefined) {
-                                values.push(row[source.sourceIndex]);
-                              }
-                            });
-                          }
-                          const mergedValue = values.join(" ");
                           return (
                             <td key={colIndex} className="px-4 py-3 text-gray-600">
-                              {mergedValue || "-"}
+                              {displayValue || "-"}
                             </td>
                           );
                         })}
@@ -1706,6 +1705,49 @@ export default function FileImportWizard() {
     const hasErrors = validationIssues.some((issue) => issue.severity === "error")
     const hasWarnings = validationIssues.some((issue) => issue.severity === "warning")
     const hasAnyIssues = validationIssues.length > 0
+
+    const handleImport = () => {
+      // Get the final data to import
+      const importData = dataRows.map(({ row, absoluteIndex }) => {
+        const rowData: Record<string, any> = {}
+
+        expectedColumns.forEach((col) => {
+          const mapping = columnMappings.find((m) => m.targetField === col.field)
+          if (!mapping) return
+
+          // Check for edited value first
+          const editedValue = editedRows[absoluteIndex]?.[col.field]
+          let cellValue: string | null = null
+
+          if (editedValue !== undefined && editedValue !== null && editedValue !== "") {
+            cellValue = editedValue
+          } else {
+            // Otherwise use merged values
+            let values: string[] = []
+            if (mapping.sourceIndex !== null && row[mapping.sourceIndex] !== undefined) {
+              values.push(row[mapping.sourceIndex])
+            }
+            if (mapping.additionalSources && mapping.additionalSources.length > 0) {
+              mapping.additionalSources.forEach(source => {
+                if (row[source.sourceIndex] !== undefined) {
+                  values.push(row[source.sourceIndex])
+                }
+              })
+            }
+            cellValue = values.join(" ") || null
+          }
+
+          // Apply transformation!
+          rowData[col.field] = cellValue !== null
+            ? transformValue(cellValue, mapping.transformation)
+            : null
+        })
+
+        return rowData
+      })
+
+      console.log('Importing data:', importData)
+    }
 
     return (
       <>
@@ -1885,7 +1927,8 @@ export default function FileImportWizard() {
 
                             if (isEditing) {
                               const cellValue = editedRows[absoluteIndex][col.field] ?? "";
-                              // console.log(`Rendering (editing) row ${absoluteIndex}, col ${col.field}:`, cellValue);
+                              // Apply transformation to edited value
+                              const transformedValue = transformValue(cellValue, mapping.transformation);
                               if (isBooleanLike(cellValue)) {
                                 return (
                                   <td key={colIndex} className="px-4 py-3">
@@ -1907,6 +1950,7 @@ export default function FileImportWizard() {
                                     }
                                     className="h-8 text-sm"
                                   />
+                                  <div className="text-xs text-gray-400 mt-1">{transformedValue}</div>
                                 </td>
                               )
                             }
@@ -1923,7 +1967,8 @@ export default function FileImportWizard() {
                               })
                             }
                             const mergedValue = values.join(" ")
-                            // console.log(`Rendering (not editing) row ${absoluteIndex}, col ${col.field}:`, mergedValue, values);
+                            // Apply transformation to merged value
+                            const transformedValue = transformValue(mergedValue, mapping.transformation)
                             return (
                               <td
                                 key={colIndex}
@@ -1936,7 +1981,7 @@ export default function FileImportWizard() {
                                       : "text-gray-600",
                                 )}
                               >
-                                {mergedValue || "-"}
+                                {transformedValue || "-"}
                                 {cellIssue && (
                                   <TooltipProvider>
                                     <Tooltip>
@@ -1969,8 +2014,8 @@ export default function FileImportWizard() {
           <Button variant="outline" onClick={goToPreviousStep} className="flex items-center gap-2">
             <ChevronLeft className="h-4 w-4" /> Back
           </Button>
-          <Button onClick={goToNextStep} className="flex items-center gap-2">
-            Next <ChevronRight className="h-4 w-4" />
+          <Button onClick={handleImport} className="flex items-center gap-2">
+            Import Data <Upload className="h-4 w-4" />
           </Button>
         </div>
       </>
