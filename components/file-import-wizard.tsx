@@ -19,6 +19,7 @@ import {
   BookmarkPlus,
   Bookmark,
   MoreHorizontal,
+  X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -90,6 +91,7 @@ type ColumnMapping = {
   targetField: string
   required: boolean
   transformation: TransformationConfig
+  additionalSources?: { sourceIndex: number; label: string }[]
 }
 
 type ValidationIssue = {
@@ -796,6 +798,71 @@ export default function FileImportWizard() {
     });
   }
 
+  // --- New state for multi-select mapping ---
+  const [multiSelectOpenFor, setMultiSelectOpenFor] = useState<string | null>(null)
+  const [multiSelectSelected, setMultiSelectSelected] = useState<number[]>([])
+  // Add additionalSources to each mapping (initialize if not present)
+  useEffect(() => {
+    setColumnMappings((prev) =>
+      prev.map((m) =>
+        m.additionalSources ? m : { ...m, additionalSources: [] }
+      )
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Handler to open multi-select for a column
+  const handleOpenMultiSelect = (targetField: string, mapping: ColumnMapping) => {
+    setMultiSelectOpenFor(targetField)
+    setMultiSelectSelected(mapping.additionalSources?.map(s => s.sourceIndex) || [])
+  }
+
+  // Handler to toggle selection in multi-select
+  const handleToggleMultiSelect = (colIdx: number) => {
+    setMultiSelectSelected((prev) =>
+      prev.includes(colIdx) ? prev.filter(i => i !== colIdx) : [...prev, colIdx]
+    )
+  }
+
+  // Handler to apply multi-select
+  const handleApplyMultiSelect = (targetField: string, headerRow: string[]) => {
+    setColumnMappings((prev) =>
+      prev.map((m) =>
+        m.targetField === targetField
+          ? {
+            ...m,
+            additionalSources: multiSelectSelected
+              .filter(idx => idx !== m.sourceIndex && idx >= 0)
+              .map(idx => ({
+                sourceIndex: idx,
+                label: headerRow[idx] || `Column ${idx + 1}`,
+              })),
+          }
+          : m
+      )
+    )
+    setMultiSelectOpenFor(null)
+  }
+
+  // Handler to cancel multi-select
+  const handleCancelMultiSelect = () => {
+    setMultiSelectOpenFor(null)
+  }
+
+  // Handler to remove an additional source
+  const handleRemoveAdditionalSource = (targetField: string, sourceIndex: number) => {
+    setColumnMappings((prev) =>
+      prev.map((m) =>
+        m.targetField === targetField
+          ? {
+            ...m,
+            additionalSources: (m.additionalSources || []).filter(s => s.sourceIndex !== sourceIndex),
+          }
+          : m
+      )
+    )
+  }
+
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
@@ -945,7 +1012,7 @@ export default function FileImportWizard() {
           <Button variant="outline" onClick={goToPreviousStep} className="flex items-center gap-2">
             <ChevronLeft className="h-4 w-4" /> Back
           </Button>
-          <Button onClick={goToNextStep} className="flex items-center gap-2" disabled={selectedHeaderRow === null}>
+          <Button onClick={goToNextStep} className="flex items-center gap-2">
             Next <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
@@ -1249,7 +1316,11 @@ export default function FileImportWizard() {
     if (!displayData || selectedHeaderRow === null) return null
 
     const headerRow = displayData.rows[selectedHeaderRow]
-    const dataPreviewRows = displayData.rows.slice(selectedHeaderRow + 1, selectedHeaderRow + 4)
+    // Show all data rows, not just 3
+    const dataPreviewRows = displayData.rows.slice(selectedHeaderRow + 1)
+
+    // Add this line:
+    const hasErrors = validationIssues.some((issue) => issue.severity === "error");
 
     // Count active transformations
     const activeTransformations = columnMappings.filter((m) => m.transformation.type !== "none").length
@@ -1424,7 +1495,78 @@ export default function FileImportWizard() {
                     </Select>
 
                     {mapping.sourceIndex !== null && renderTransformationOptions(mapping, expectedCol)}
+
+                    {/* --- Extra: Match Multiple Button --- */}
+                    {mapping.sourceIndex !== null && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="ml-2"
+                        onClick={() => handleOpenMultiSelect(expectedCol.field, mapping)}
+                      >
+                        Match Multiple
+                      </Button>
+                    )}
                   </div>
+
+                  {/* --- Show additional sources as badges --- */}
+                  {mapping.additionalSources && mapping.additionalSources.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {mapping.additionalSources.map((source) => (
+                        <Badge key={source.sourceIndex} variant="secondary" className="flex items-center gap-1">
+                          {source.label}
+                          <button
+                            className="ml-1 hover:text-red-500"
+                            onClick={() => handleRemoveAdditionalSource(expectedCol.field, source.sourceIndex)}
+                            type="button"
+                          >
+                            ×
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* --- Multi-select modal/panel --- */}
+                  {multiSelectOpenFor === expectedCol.field && (
+                    <div className="mt-4 border rounded-lg p-4 bg-gray-50">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-medium">Match Multiple Columns to {expectedCol.label}</h4>
+                        <Button variant="ghost" size="sm" onClick={handleCancelMultiSelect}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="max-h-60 overflow-y-auto mb-4">
+                        {headerRow.map((col, idx) => {
+                          // Don't show the primary source
+                          if (idx === mapping.sourceIndex) return null
+                          return (
+                            <div key={idx} className="flex items-center space-x-2 py-1.5 border-b last:border-0">
+                              <Checkbox
+                                id={`col-${expectedCol.field}-${idx}`}
+                                checked={multiSelectSelected.includes(idx)}
+                                onCheckedChange={() => handleToggleMultiSelect(idx)}
+                              />
+                              <Label htmlFor={`col-${expectedCol.field}-${idx}`} className="flex-1 cursor-pointer">
+                                {col}
+                              </Label>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={handleCancelMultiSelect}>
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => handleApplyMultiSelect(expectedCol.field, headerRow)}
+                        >
+                          Apply
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -1432,7 +1574,8 @@ export default function FileImportWizard() {
 
           <div className="mt-8">
             <h3 className="text-lg font-medium text-gray-800 mb-4">Data Preview with Transformations</h3>
-            <div className="border rounded-lg overflow-x-auto">
+            {/* Make table scrollable and show all data */}
+            <div className="border rounded-lg overflow-x-auto max-h-80 overflow-y-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b">
@@ -1452,29 +1595,14 @@ export default function FileImportWizard() {
                 <tbody>
                   {dataPreviewRows.map((row, rowIndex) => {
                     const absoluteIndex = rowIndex + selectedHeaderRow + 1
-                    const isSelected = selectedRows.includes(absoluteIndex)
-                    const isEditing = editedRows[absoluteIndex] !== undefined
-                    const hasWarning = validationIssues.some(
-                      (issue) => issue.row === absoluteIndex && issue.severity === "warning"
-                    )
-                    const hasError = validationIssues.some(
-                      (issue) => issue.row === absoluteIndex && issue.severity === "error"
-                    )
                     return (
                       <tr
                         key={absoluteIndex}
                         className={cn(
                           "border-b last:border-b-0",
-                          isSelected ? "bg-primary/5" : hasError ? "bg-red-50" : hasWarning ? "bg-yellow-50" : rowIndex % 2 === 0 ? "bg-white" : "bg-gray-50"
+                          rowIndex % 2 === 0 ? "bg-white" : "bg-gray-50"
                         )}
                       >
-                        <td className="px-4 py-3">
-                          <Checkbox
-                            checked={isSelected}
-                            onCheckedChange={(checked) => handleRowSelect(absoluteIndex, !!checked)}
-                            aria-label={`Select row ${rowIndex + 1}`}
-                          />
-                        </td>
                         {expectedColumns.map((col, colIndex) => {
                           const mapping = columnMappings.find((m) => m.targetField === col.field)
                           if (!mapping)
@@ -1483,63 +1611,23 @@ export default function FileImportWizard() {
                                 -
                               </td>
                             )
-                          let value = mapping.sourceIndex !== null ? row[mapping.sourceIndex] : "-"
-                          // Check if this cell has a validation issue
-                          const cellIssue = validationIssues.find(
-                            (issue) => issue.row === absoluteIndex && issue.column === col.field,
-                          )
-                          // If editing, show input or toggle
-                          if (isEditing) {
-                            if (col.field === "isManager") {
-                              return (
-                                <td key={colIndex} className="px-4 py-3">
-                                  <Switch
-                                    checked={editedRows[absoluteIndex][col.field] === "true"}
-                                    onCheckedChange={(checked) =>
-                                      handleEditFieldChange(absoluteIndex, col.field, checked ? "true" : "false")
-                                    }
-                                  />
-                                </td>
-                              )
-                            }
-                            return (
-                              <td key={colIndex} className="px-4 py-3">
-                                <Input
-                                  value={editedRows[absoluteIndex][col.field] ?? value}
-                                  onChange={(e) =>
-                                    handleEditFieldChange(absoluteIndex, col.field, e.target.value)
-                                  }
-                                  className="h-8 text-sm"
-                                />
-                              </td>
-                            )
+                          // --- Merge values from primary and additional sources ---
+                          let values: string[] = []
+                          if (mapping.sourceIndex !== null && row[mapping.sourceIndex] !== undefined) {
+                            values.push(row[mapping.sourceIndex])
                           }
-                          // Not editing: show value, with error/warning color and tooltip
+                          if (mapping.additionalSources && mapping.additionalSources.length > 0) {
+                            mapping.additionalSources.forEach(source => {
+                              if (row[source.sourceIndex] !== undefined) {
+                                values.push(row[source.sourceIndex])
+                              }
+                            })
+                          }
+                          // Join merged values with a space (customize as needed)
+                          const mergedValue = values.join(" ")
                           return (
-                            <td
-                              key={colIndex}
-                              className={cn(
-                                "px-4 py-3",
-                                cellIssue?.severity === "error"
-                                  ? "text-red-600"
-                                  : cellIssue?.severity === "warning"
-                                    ? "text-amber-600"
-                                    : "text-gray-600",
-                              )}
-                            >
-                              {value}
-                              {cellIssue && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <AlertCircle className="h-3 w-3 inline ml-1" />
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      <p>{cellIssue.message}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
+                            <td key={colIndex} className="px-4 py-3 text-gray-600">
+                              {mergedValue || "-"}
                             </td>
                           )
                         })}
@@ -1558,11 +1646,7 @@ export default function FileImportWizard() {
           <Button variant="outline" onClick={goToPreviousStep} className="flex items-center gap-2">
             <ChevronLeft className="h-4 w-4" /> Back
           </Button>
-          <Button
-            onClick={goToNextStep}
-            className="flex items-center gap-2"
-            disabled={columnMappings.some((m) => m.required && m.sourceIndex === null)}
-          >
+          <Button onClick={goToNextStep} className="flex items-center gap-2">
             Next <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
@@ -1827,15 +1911,8 @@ export default function FileImportWizard() {
           <Button variant="outline" onClick={goToPreviousStep} className="flex items-center gap-2">
             <ChevronLeft className="h-4 w-4" /> Back
           </Button>
-          <Button
-            className="flex items-center gap-2"
-            disabled={validationProgress < 100 || hasErrors}
-            onClick={() => {
-              const cleanedData = getCleanedImportData();
-              console.log(cleanedData); // This will only log the mapped columns!
-            }}
-          >
-            Import Data <ArrowDown className="h-4 w-4" />
+          <Button onClick={goToNextStep} className="flex items-center gap-2">
+            Next <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
       </>
