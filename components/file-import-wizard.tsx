@@ -735,14 +735,12 @@ export default function FileImportWizard() {
     }))
   }, [])
   const handleStartEditingAll = () => {
-    // Use getFilteredDataRows() if you filter rows, or use the raw dataRows
     const dataRows = getFilteredDataRows();
     const newEditedRows: Record<number, Record<string, string>> = {};
     dataRows.forEach(({ row, absoluteIndex }) => {
       const rowEdit: Record<string, string> = {};
       columnMappings.forEach((mapping) => {
         if (mapping.sourceIndex !== null) {
-          // --- Merge values from primary and additional sources ---
           let values: string[] = [];
           if (row[mapping.sourceIndex] !== undefined) {
             values.push(row[mapping.sourceIndex]);
@@ -759,32 +757,33 @@ export default function FileImportWizard() {
       });
       newEditedRows[absoluteIndex] = rowEdit;
     });
+    console.log("handleStartEditingAll: newEditedRows", newEditedRows);
     setEditedRows(newEditedRows);
   };
   const handleCancelEdit = () => setEditedRows({})
   const handleSaveEdit = () => {
-    if (!displayData || selectedHeaderRow === null) return;
-
-    // Map over all rows, but only update if this is a data row and exists in editedRows
-    const newRows = displayData.rows.map((row, idx) => {
-      if (idx === 0) return row; // header row, never edited
-      if (editedRows[idx]) {
-        // Update this row with edited values
-        const updatedRow = [...row];
-        columnMappings.forEach((mapping) => {
-          if (
-            mapping.sourceIndex !== null &&
-            editedRows[idx][mapping.targetField] !== undefined
-          ) {
-            updatedRow[mapping.sourceIndex] = editedRows[idx][mapping.targetField];
+    // For each edited row
+    Object.entries(editedRows).forEach(([absoluteIndexStr, rowEdits]) => {
+      const absoluteIndex = Number(absoluteIndexStr);
+      // For each edited field in the row
+      Object.entries(rowEdits).forEach(([field, value]) => {
+        const mapping = columnMappings.find(m => m.targetField === field);
+        if (mapping) {
+          // Set the primary source to the edited value
+          displayData.rows[absoluteIndex][mapping.sourceIndex] = value;
+          // Set all additional sources to empty string
+          if (mapping.additionalSources) {
+            mapping.additionalSources.forEach(source => {
+              displayData.rows[absoluteIndex][source.sourceIndex] = "";
+            });
           }
-        });
-        return updatedRow;
-      }
-      return row;
+        }
+      });
     });
 
-    setFileData({ ...displayData, rows: newRows });
+    // Revalidate after saving edits
+    validateData(); // <-- Make sure this uses the latest data
+
     setEditedRows({});
   };
 
@@ -1645,24 +1644,35 @@ export default function FileImportWizard() {
                                 -
                               </td>
                             )
-                          // --- Merge values from primary and additional sources ---
-                          let values: string[] = []
+
+                          // Check for edited value (even after saving)
+                          const editedValue = editedRows[absoluteIndex]?.[col.field];
+                          if (editedValue !== undefined && editedValue !== null && editedValue !== "") {
+                            return (
+                              <td key={colIndex} className="px-4 py-3 text-gray-600">
+                                {editedValue}
+                              </td>
+                            );
+                          }
+
+                          // Only merge if no edited value
+                          let values: string[] = [];
                           if (mapping.sourceIndex !== null && row[mapping.sourceIndex] !== undefined) {
-                            values.push(row[mapping.sourceIndex])
+                            values.push(row[mapping.sourceIndex]);
                           }
                           if (mapping.additionalSources && mapping.additionalSources.length > 0) {
                             mapping.additionalSources.forEach(source => {
                               if (row[source.sourceIndex] !== undefined) {
-                                values.push(row[source.sourceIndex])
+                                values.push(row[source.sourceIndex]);
                               }
-                            })
+                            });
                           }
-                          const mergedValue = values.join(" ")
+                          const mergedValue = values.join(" ");
                           return (
                             <td key={colIndex} className="px-4 py-3 text-gray-600">
                               {mergedValue || "-"}
                             </td>
-                          )
+                          );
                         })}
                       </tr>
                     )
@@ -1870,9 +1880,12 @@ export default function FileImportWizard() {
                             const cellIssue = rowIssues.find(
                               (issue) => issue.row === absoluteIndex && issue.column === col.field,
                             );
-                            // --- If editing, use edited value as-is ---
+                            const isEditing = editedRows[absoluteIndex] !== undefined;
+                            const cellValue = isEditing ? editedRows[absoluteIndex][col.field] ?? "" : undefined;
+
                             if (isEditing) {
                               const cellValue = editedRows[absoluteIndex][col.field] ?? "";
+                              // console.log(`Rendering (editing) row ${absoluteIndex}, col ${col.field}:`, cellValue);
                               if (isBooleanLike(cellValue)) {
                                 return (
                                   <td key={colIndex} className="px-4 py-3">
@@ -1888,7 +1901,7 @@ export default function FileImportWizard() {
                               return (
                                 <td key={colIndex} className="px-4 py-3">
                                   <Input
-                                    value={editedRows[absoluteIndex][col.field] ?? ""}
+                                    value={cellValue}
                                     onChange={(e) =>
                                       handleEditFieldChange(absoluteIndex, col.field, e.target.value)
                                     }
@@ -1897,7 +1910,7 @@ export default function FileImportWizard() {
                                 </td>
                               )
                             }
-                            // --- If not editing, merge values from sources ---
+                            // Not editing: merge
                             let values: string[] = []
                             if (mapping.sourceIndex !== null && row[mapping.sourceIndex] !== undefined) {
                               values.push(row[mapping.sourceIndex])
@@ -1910,6 +1923,7 @@ export default function FileImportWizard() {
                               })
                             }
                             const mergedValue = values.join(" ")
+                            // console.log(`Rendering (not editing) row ${absoluteIndex}, col ${col.field}:`, mergedValue, values);
                             return (
                               <td
                                 key={colIndex}
