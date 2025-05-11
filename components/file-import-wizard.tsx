@@ -705,8 +705,12 @@ export default function FileImportWizard() {
     if (Object.keys(editedRows).length > 0) {
       handleStartEditingAll()
     }
+    // If all issues are fixed, turn off showOnlyIssues
+    if (validationIssues.length === 0 && showOnlyIssues) {
+      setShowOnlyIssues(false)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showOnlyIssues, Object.keys(editedRows).length])
+  }, [showOnlyIssues, Object.keys(editedRows).length, validationIssues.length])
 
   // --- Editing handlers ---
   const handleEditFieldChange = useCallback((rowIndex: number, field: string, value: any) => {
@@ -718,10 +722,6 @@ export default function FileImportWizard() {
   const handleStartEditingAll = () => {
     if (!displayData || selectedHeaderRow === null) return;
     const dataRows = getFilteredDataRows();
-    console.log("handleStartEditingAll: getFilteredDataRows output:", dataRows.map(({ absoluteIndex, row }) => ({
-      absoluteIndex,
-      rowPreview: row.slice(0, 4),
-    })));
     const newEditedRows: Record<number, Record<string, any>> = {};
     dataRows.forEach(({ row, absoluteIndex }) => {
       newEditedRows[absoluteIndex] = {};
@@ -732,20 +732,11 @@ export default function FileImportWizard() {
         }
       });
     });
-    console.log("handleStartEditingAll: newEditedRows keys:", Object.keys(newEditedRows));
     setEditedRows(newEditedRows);
   };
   const handleCancelEdit = () => setEditedRows({})
   const handleSaveEdit = () => {
     if (!displayData || selectedHeaderRow === null) return;
-
-    // Log for debugging
-    console.log("handleSaveEdit: displayData.rows (before):", displayData.rows.map((row, idx) => ({
-      idx,
-      rowPreview: row.slice(0, 4),
-    })));
-    console.log("handleSaveEdit: editedRows keys:", Object.keys(editedRows));
-    console.log("handleSaveEdit: editedRows:", editedRows);
 
     // Map over all rows, but only update if this is a data row and exists in editedRows
     const newRows = displayData.rows.map((row, idx) => {
@@ -765,13 +756,6 @@ export default function FileImportWizard() {
       }
       return row;
     });
-
-    // Log for debugging
-    console.log("handleSaveEdit: newRows (after):", newRows.map((row, idx) => ({
-      idx,
-      rowPreview: row.slice(0, 4),
-    })));
-    console.log("handleSaveEdit: newRows.length (after):", newRows.length);
 
     setFileData({ ...displayData, rows: newRows });
     setEditedRows({});
@@ -1577,14 +1561,7 @@ export default function FileImportWizard() {
     const allSelected = allRowIndices.length > 0 && allRowIndices.every(idx => selectedRows.includes(idx))
     const hasErrors = validationIssues.some((issue) => issue.severity === "error")
     const hasWarnings = validationIssues.some((issue) => issue.severity === "warning")
-
-    console.log(
-      "dataRows (for table):",
-      dataRows.map(({ absoluteIndex, row }) => ({
-        absoluteIndex,
-        rowPreview: row.slice(0, 4), // show first 4 columns for clarity
-      }))
-    );
+    const hasAnyIssues = validationIssues.length > 0
 
     return (
       <>
@@ -1604,8 +1581,11 @@ export default function FileImportWizard() {
             onCheckedChange={setShowOnlyIssues}
             id="show-only-issues"
             className="ml-4"
+            disabled={!hasAnyIssues}
           />
-          <Label htmlFor="show-only-issues">Show only rows with issues</Label>
+          <Label htmlFor="show-only-issues" className={!hasAnyIssues ? "text-gray-400" : ""}>
+            Show only rows with issues
+          </Label>
           <Button
             variant="destructive"
             disabled={selectedRows.length === 0}
@@ -1729,10 +1709,6 @@ export default function FileImportWizard() {
                       const rowIssues = validationIssues.filter((issue) => issue.row === absoluteIndex)
                       const hasError = rowIssues.some((issue) => issue.severity === "error")
                       const hasWarning = rowIssues.some((issue) => issue.severity === "warning")
-
-                      console.log(
-                        `Rendering row: absoluteIndex=${absoluteIndex}, rowPreview=${row.slice(0, 4)}, hasWarning=${hasWarning}, hasError=${hasError}`
-                      );
 
                       return (
                         <tr
