@@ -109,6 +109,19 @@ type TransformationTemplate = {
   mappings: ColumnMapping[]
 }
 
+function isBooleanLike(value: any) {
+  return (
+    value === true ||
+    value === false ||
+    value === "true" ||
+    value === "false" ||
+    value === 1 ||
+    value === 0 ||
+    value === "1" ||
+    value === "0"
+  );
+}
+
 export default function FileImportWizard() {
   const [currentStep, setCurrentStep] = useState(1)
   const [fileData, setFileData] = useState<FileData | null>(null)
@@ -722,17 +735,29 @@ export default function FileImportWizard() {
     }))
   }, [])
   const handleStartEditingAll = () => {
-    if (!displayData || selectedHeaderRow === null) return;
+    // Use getFilteredDataRows() if you filter rows, or use the raw dataRows
     const dataRows = getFilteredDataRows();
-    const newEditedRows: Record<number, Record<string, any>> = {};
+    const newEditedRows: Record<number, Record<string, string>> = {};
     dataRows.forEach(({ row, absoluteIndex }) => {
-      newEditedRows[absoluteIndex] = {};
-      expectedColumns.forEach((col) => {
-        const mapping = columnMappings.find((m) => m.targetField === col.field);
-        if (mapping && mapping.sourceIndex !== null) {
-          newEditedRows[absoluteIndex][col.field] = row[mapping.sourceIndex];
+      const rowEdit: Record<string, string> = {};
+      columnMappings.forEach((mapping) => {
+        if (mapping.sourceIndex !== null) {
+          // --- Merge values from primary and additional sources ---
+          let values: string[] = [];
+          if (row[mapping.sourceIndex] !== undefined) {
+            values.push(row[mapping.sourceIndex]);
+          }
+          if (mapping.additionalSources && mapping.additionalSources.length > 0) {
+            mapping.additionalSources.forEach(source => {
+              if (row[source.sourceIndex] !== undefined) {
+                values.push(row[source.sourceIndex]);
+              }
+            });
+          }
+          rowEdit[mapping.targetField] = values.join(" ");
         }
       });
+      newEditedRows[absoluteIndex] = rowEdit;
     });
     setEditedRows(newEditedRows);
   };
@@ -791,7 +816,19 @@ export default function FileImportWizard() {
       const cleanedRow: Record<string, string> = {};
       columnMappings.forEach(mapping => {
         if (mapping.sourceIndex !== null) {
-          cleanedRow[mapping.targetField] = row[mapping.sourceIndex];
+          // --- Merge values from primary and additional sources ---
+          let values: string[] = [];
+          if (row[mapping.sourceIndex] !== undefined) {
+            values.push(row[mapping.sourceIndex]);
+          }
+          if (mapping.additionalSources && mapping.additionalSources.length > 0) {
+            mapping.additionalSources.forEach(source => {
+              if (row[source.sourceIndex] !== undefined) {
+                values.push(row[source.sourceIndex]);
+              }
+            });
+          }
+          cleanedRow[mapping.targetField] = values.join(" ");
         }
       });
       return cleanedRow;
@@ -1319,9 +1356,6 @@ export default function FileImportWizard() {
     // Show all data rows, not just 3
     const dataPreviewRows = displayData.rows.slice(selectedHeaderRow + 1)
 
-    // Add this line:
-    const hasErrors = validationIssues.some((issue) => issue.severity === "error");
-
     // Count active transformations
     const activeTransformations = columnMappings.filter((m) => m.transformation.type !== "none").length
 
@@ -1623,7 +1657,6 @@ export default function FileImportWizard() {
                               }
                             })
                           }
-                          // Join merged values with a space (customize as needed)
                           const mergedValue = values.join(" ")
                           return (
                             <td key={colIndex} className="px-4 py-3 text-gray-600">
@@ -1794,7 +1827,7 @@ export default function FileImportWizard() {
                           aria-label="Select all rows"
                         />
                       </th>
-                      {expectedColumns.map((col) => (
+                      {expectedColumns.map((col, colIndex) => (
                         <th key={col.field} className="px-4 py-3 text-left font-medium text-gray-700">
                           {col.label}
                           {col.field === "isManager" && <span className="ml-2 text-xs text-gray-500">(toggle)</span>}
@@ -1834,18 +1867,17 @@ export default function FileImportWizard() {
                                   -
                                 </td>
                               )
-                            let value = mapping.sourceIndex !== null ? row[mapping.sourceIndex] : "-"
-                            // Check if this cell has a validation issue
                             const cellIssue = rowIssues.find(
                               (issue) => issue.row === absoluteIndex && issue.column === col.field,
-                            )
-                            // If editing, show input or toggle
+                            );
+                            // --- If editing, use edited value as-is ---
                             if (isEditing) {
-                              if (col.field === "isManager") {
+                              const cellValue = editedRows[absoluteIndex][col.field] ?? "";
+                              if (isBooleanLike(cellValue)) {
                                 return (
                                   <td key={colIndex} className="px-4 py-3">
                                     <Switch
-                                      checked={editedRows[absoluteIndex][col.field] === "true"}
+                                      checked={cellValue === true || cellValue === "true" || cellValue === 1 || cellValue === "1"}
                                       onCheckedChange={(checked) =>
                                         handleEditFieldChange(absoluteIndex, col.field, checked ? "true" : "false")
                                       }
@@ -1856,7 +1888,7 @@ export default function FileImportWizard() {
                               return (
                                 <td key={colIndex} className="px-4 py-3">
                                   <Input
-                                    value={editedRows[absoluteIndex][col.field] ?? value}
+                                    value={editedRows[absoluteIndex][col.field] ?? ""}
                                     onChange={(e) =>
                                       handleEditFieldChange(absoluteIndex, col.field, e.target.value)
                                     }
@@ -1865,7 +1897,19 @@ export default function FileImportWizard() {
                                 </td>
                               )
                             }
-                            // Not editing: show value, with error/warning color and tooltip
+                            // --- If not editing, merge values from sources ---
+                            let values: string[] = []
+                            if (mapping.sourceIndex !== null && row[mapping.sourceIndex] !== undefined) {
+                              values.push(row[mapping.sourceIndex])
+                            }
+                            if (mapping.additionalSources && mapping.additionalSources.length > 0) {
+                              mapping.additionalSources.forEach(source => {
+                                if (row[source.sourceIndex] !== undefined) {
+                                  values.push(row[source.sourceIndex])
+                                }
+                              })
+                            }
+                            const mergedValue = values.join(" ")
                             return (
                               <td
                                 key={colIndex}
@@ -1878,7 +1922,7 @@ export default function FileImportWizard() {
                                       : "text-gray-600",
                                 )}
                               >
-                                {value}
+                                {mergedValue || "-"}
                                 {cellIssue && (
                                   <TooltipProvider>
                                     <Tooltip>
