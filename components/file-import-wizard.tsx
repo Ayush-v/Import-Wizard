@@ -779,6 +779,23 @@ export default function FileImportWizard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileData])
 
+  // Helper to get only mapped columns for import
+  function getCleanedImportData() {
+    if (!displayData || selectedHeaderRow === null) return [];
+    const dataRows = displayData.rows.slice(selectedHeaderRow + 1);
+
+    // Only keep columns that are mapped (sourceIndex !== null), in the order of expectedColumns
+    return dataRows.map(row => {
+      const cleanedRow: Record<string, string> = {};
+      columnMappings.forEach(mapping => {
+        if (mapping.sourceIndex !== null) {
+          cleanedRow[mapping.targetField] = row[mapping.sourceIndex];
+        }
+      });
+      return cleanedRow;
+    });
+  }
+
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
@@ -1810,7 +1827,14 @@ export default function FileImportWizard() {
           <Button variant="outline" onClick={goToPreviousStep} className="flex items-center gap-2">
             <ChevronLeft className="h-4 w-4" /> Back
           </Button>
-          <Button className="flex items-center gap-2" disabled={validationProgress < 100 || hasErrors} onClick={() => console.log(dataRows)}>
+          <Button
+            className="flex items-center gap-2"
+            disabled={validationProgress < 100 || hasErrors}
+            onClick={() => {
+              const cleanedData = getCleanedImportData();
+              console.log(cleanedData); // This will only log the mapped columns!
+            }}
+          >
             Import Data <ArrowDown className="h-4 w-4" />
           </Button>
         </div>
