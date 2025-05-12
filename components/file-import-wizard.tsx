@@ -760,13 +760,15 @@ export default function FileImportWizard() {
   };
   const handleCancelEdit = () => setEditedRows({})
   const handleSaveEdit = () => {
+    if (!displayData) return; // Add early return if displayData is null
+
     // For each edited row
     Object.entries(editedRows).forEach(([absoluteIndexStr, rowEdits]) => {
       const absoluteIndex = Number(absoluteIndexStr);
       // For each edited field in the row
       Object.entries(rowEdits).forEach(([field, value]) => {
         const mapping = columnMappings.find(m => m.targetField === field);
-        if (mapping) {
+        if (mapping && mapping.sourceIndex !== null) { // Add null check for sourceIndex
           // Set the primary source to the edited value
           displayData.rows[absoluteIndex][mapping.sourceIndex] = value;
           // Set all additional sources to empty string
@@ -780,7 +782,7 @@ export default function FileImportWizard() {
     });
 
     // Revalidate after saving edits
-    validateData(); // <-- Make sure this uses the latest data
+    validateData();
 
     setEditedRows({});
   };
