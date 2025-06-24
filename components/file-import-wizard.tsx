@@ -755,7 +755,6 @@ export default function FileImportWizard() {
       });
       newEditedRows[absoluteIndex] = rowEdit;
     });
-    console.log("handleStartEditingAll: newEditedRows", newEditedRows);
     setEditedRows(newEditedRows);
   };
   const handleCancelEdit = () => setEditedRows({})
